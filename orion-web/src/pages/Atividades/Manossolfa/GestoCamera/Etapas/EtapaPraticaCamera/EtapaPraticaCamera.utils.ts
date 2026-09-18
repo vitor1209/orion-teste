@@ -1,0 +1,1 @@
+export const DURACAO_CONFIRMACAO_SEGUNDOS = 3

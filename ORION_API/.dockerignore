@@ -1,0 +1,47 @@
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*$py.class
+
+# Configs e credenciais
+.env
+.env.*
+!.env.example
+*.ini
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.sqlite3
+*.db
+
+# Build / distribuicao
+build/
+dist/
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Docker
+Dockerfile
+docker-compose.yml
+
+# Logs
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+.venv/
+.git/
+.gitignore
+README.md
+pyproject.toml

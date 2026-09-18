@@ -1,0 +1,27 @@
+.luva-piano-wrapper .ReactPiano__Key.ReactPiano__Key--active {
+  background: #aa4cff;
+}
+
+.luva-piano-wrapper .ReactPiano__Key.ReactPiano__Key--accidental {
+  background: #000;
+}
+
+.luva-piano-wrapper .ReactPiano__Key.ReactPiano__Key--natural {
+  background: #fff;
+  border: 1px solid #000;
+  border-radius: 0;
+}
+
+.luva-piano-wrapper .ReactPiano__Key.ReactPiano__Key--active.ReactPiano__Key--natural {
+  border: 1px solid #aa4cff;
+  background: #aa4cff;
+}
+
+.luva-piano-wrapper .ReactPiano__Key.ReactPiano__Key--active.ReactPiano__Key--accidental {
+  border: 1px solid #aa4cff;
+  background: #aa4cff;
+}
+
+.luva-piano-wrapper .ReactPiano__NoteLabelContainer {
+  display: none;
+}

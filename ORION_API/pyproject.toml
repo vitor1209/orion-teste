@@ -1,0 +1,96 @@
+target-version = "py311"
+line-length = 100
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+
+[lint]
+select = [
+    # Pyflakes
+    "F",
+
+    # pycodestyle
+    "E",
+    "W",
+
+    # isort
+    "I",
+
+    # flake8-bugbear
+    "B",
+
+    # flake8-comprehensions
+    "C4",
+
+    # pyupgrade
+    "UP",
+
+    # naming
+    "N",
+
+    # simplificações
+    "SIM",
+
+    # retornos
+    "RET",
+
+    # boas práticas
+    "PIE",
+
+    # argumentos booleanos
+    "FBT",
+
+    # imports
+    "TID",
+
+    # segurança básica
+    "S",
+
+    # complexidade
+    "C90",
+]
+
+ignore = [
+    # Permite bools em FastAPI/Pydantic
+    "FBT001",
+    "FBT002",
+
+    # Menos agressivo em APIs
+    "RET504",
+]
+
+fixable = ["ALL"]
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/*" = [
+    "S101",
+]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+]
+
+[lint.isort]
+combine-as-imports = true
+force-single-line = false
+split-on-trailing-comma = true
+
+[lint.pep8-naming]
+classmethod-decorators = [
+    "classmethod",
+]
+
+[lint.pycodestyle]
+max-doc-length = 100
