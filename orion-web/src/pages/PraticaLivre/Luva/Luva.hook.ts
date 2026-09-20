@@ -1,20 +1,22 @@
 import type { MouseEvent } from "react"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { MidiNumbers } from "react-piano"
 import type { LogLuva, Oitava } from "./Luva.types"
 import { obterLarguraPiano, obterPrimeiraNota, obterUltimaNota } from "./Luva.utils"
-import type { NotaComOitava } from "../../../utils/Notas.types"
-import { useLuva } from "../../../hooks/useLuva/useLuva.hook"
-import { useNotaSound } from "../../../hooks/useNotaSound/useNotaSound.hook"
+import type { NotaComOitava } from "@/utils/Notas.types"
+import { useLuva } from "@/hooks/useLuva/useLuva.hook"
+import { useNotaSound } from "@/hooks/useNotaSound/useNotaSound.hook"
 
 export const useLuvaPage = () => {
     const [oitava, setOitava] = useState<Oitava>("4")
     const [notas, setNotas] = useState<NotaComOitava[]>([])
     const [logs, setLogs] = useState<LogLuva[]>([])
 
+    const ultimaSequenciaRegistrada = useRef<number | null>(null)
+
     const rotaVoltar = "/selecao-modo?modo=livre"
 
-    const { estado, conectar, desconectar, conectado } = useLuva()
+    const { estado, sequencia, conectar, desconectar, conectado } = useLuva()
     const { play } = useNotaSound({})
 
     const primeiraNota = obterPrimeiraNota(oitava)
@@ -40,35 +42,32 @@ export const useLuvaPage = () => {
 
     const removerUltimaNota = () => setNotas((notasAtuais) => notasAtuais.slice(0, -1))
 
-    const tocarNota = useCallback(async (midiNumber: number) => {
+    const tocarNota = async (midiNumber: number) => {
         const { note } = MidiNumbers.getAttributes(midiNumber)
         await play(note as NotaComOitava)
         setNotas((notasAtuais) => [...notasAtuais, note as NotaComOitava])
-    }, [play])
+    }
 
     useEffect(() => {
-        if (!estado?.nota) return
-
-        const notaComOitava = `${estado.nota}${oitava}` as NotaComOitava
-
-        try {
-            const midi = MidiNumbers.fromNote(notaComOitava)
-            const horario = new Date().toLocaleTimeString()
-
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setLogs((logsAtuais) => [
-                ...logsAtuais,
-                {
-                    horario,
-                    mensagem: `Luva: ${notaComOitava}`,
-                },
-            ])
-
-            void tocarNota(midi)
-        } catch {
+        if (ultimaSequenciaRegistrada.current === null) {
+            ultimaSequenciaRegistrada.current = sequencia
             return
         }
-    }, [estado?.nota, oitava, tocarNota])
+
+        if (sequencia === ultimaSequenciaRegistrada.current) return
+
+        ultimaSequenciaRegistrada.current = sequencia
+
+        if (!estado?.nota) return
+
+        const horario = new Date().toLocaleTimeString()
+
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLogs((logsAtuais) => [
+            ...logsAtuais,
+            { horario, mensagem: `Luva: ${estado.nota}${oitava}` },
+        ])
+    }, [sequencia, estado?.nota, oitava])
 
     useEffect(() => {
         const horario = new Date().toLocaleTimeString()

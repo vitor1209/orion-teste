@@ -1,7 +1,4 @@
-import {
-    useCallback,
-    useSyncExternalStore,
-} from "react"
+import { useSyncExternalStore } from "react"
 
 export type Nota =
     | "C"
@@ -23,6 +20,7 @@ export type NotaType = {
 
 type EstadoLuva = {
     estado: NotaType | null
+    sequencia: number
     conectado: boolean
     luva: Luva | null
 }
@@ -32,19 +30,59 @@ type FiltroLuva = {
     usbProductId?: number
 }
 
+const TEMPO_ATE_SOLTAR_MS = 250
+const TENTATIVAS_ABERTURA = 3
+const INTERVALO_ENTRE_TENTATIVAS_MS = 250
+const TEMPO_MAXIMO_ENCERRAR_LEITURA_MS = 3000
+const TAXA_ENVIO_PADRAO = 9600
+
+const NOTAS_VALIDAS: Nota[] = [
+    "C",
+    "C#",
+    "D",
+    "D#",
+    "E",
+    "F",
+    "F#",
+    "G",
+    "G#",
+    "A",
+    "A#",
+    "B",
+]
+
+const EVENTOS_DE_SOLTURA = ["soltar", "soltou", "release", "note_off", "off"]
+
+const esperar = (milissegundos: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milissegundos))
+
+const isNotaValida = (valor: unknown): valor is Nota =>
+    typeof valor === "string" && NOTAS_VALIDAS.includes(valor as Nota)
+
+const isEventoSoltar = (payload: Record<string, unknown>): boolean => {
+    if ("nota" in payload && payload.nota === null) return true
+
+    if (payload.pressionado === false || payload.ativo === false) return true
+
+    const evento = payload.evento ?? payload.tipo
+
+    return typeof evento === "string" && EVENTOS_DE_SOLTURA.includes(evento.toLowerCase())
+}
+
 class LuvaStore {
     private listeners = new Set<() => void>()
 
+    private timerSoltar: ReturnType<typeof setTimeout> | null = null
+
+    private conectando = false
+
+    private fila: Promise<unknown> = Promise.resolve()
+
     private estado: EstadoLuva = {
         estado: null,
+        sequencia: 0,
         conectado: false,
         luva: null,
-    }
-
-    private notificiar() {
-        for (const listener of this.listeners) {
-            listener()
-        }
     }
 
     subscribe = (listener: () => void) => {
@@ -55,13 +93,31 @@ class LuvaStore {
         }
     }
 
-    getSnapshot = () => {
-        return this.estado
+    getSnapshot = () => this.estado
+
+    conectar() {
+        return this.enfileirar(() => this.executarConexao())
     }
 
-    private atualizar(
-        alteracoes: Partial<EstadoLuva>,
-    ) {
+    desconectar() {
+        return this.enfileirar(() => this.executarDesconexao())
+    }
+
+    private enfileirar<T>(operacao: () => Promise<T>): Promise<T> {
+        const proxima = this.fila.then(operacao, operacao)
+
+        this.fila = proxima.catch(() => {})
+
+        return proxima
+    }
+
+    private notificiar() {
+        for (const listener of this.listeners) {
+            listener()
+        }
+    }
+
+    private atualizar(alteracoes: Partial<EstadoLuva>) {
         this.estado = {
             ...this.estado,
             ...alteracoes,
@@ -70,111 +126,129 @@ class LuvaStore {
         this.notificiar()
     }
 
-    async conectar() {
-        if (this.estado.luva) {
-            return
-        }
+    private cancelarTimerSoltar() {
+        if (this.timerSoltar === null) return
 
-        console.log("Luva: iniciando conexão...")
+        clearTimeout(this.timerSoltar)
 
-        await this.desconectar()
+        this.timerSoltar = null
+    }
 
-        const NOTAS_VALIDAS: Nota[] = [
-            "C",
-            "C#",
-            "D",
-            "D#",
-            "E",
-            "F",
-            "F#",
-            "G",
-            "G#",
-            "A",
-            "A#",
-            "B",
-        ]
+    private agendarSoltura() {
+        this.cancelarTimerSoltar()
 
-        const isNotaValida = (
-            valor: unknown,
-        ): valor is Nota => {
-            return (
-                typeof valor === "string" &&
-                NOTAS_VALIDAS.includes(valor as Nota)
-            )
-        }
+        this.timerSoltar = setTimeout(() => {
+            this.timerSoltar = null
 
-        const luva = new Luva({}, (linha) => {
-            try {
-                const dados = JSON.parse(linha)
+            this.soltarNota()
+        }, TEMPO_ATE_SOLTAR_MS)
+    }
 
-                if (
-                    dados &&
-                    isNotaValida(dados.nota)
-                ) {
-                    console.log(
-                        "Luva: nota recebida",
-                        dados,
-                    )
+    private soltarNota() {
+        this.cancelarTimerSoltar()
 
-                    this.atualizar({
-                        estado: dados as NotaType,
-                    })
-                } else {
-                    console.warn(
-                        "Nota inválida recebida da luva:",
-                        dados,
-                    )
-                }
-            } catch (erro) {
-                console.error(
-                    "Erro ao parsear JSON da luva:",
-                    linha,
-                    erro,
-                )
-            }
-        })
+        if (!this.estado.estado) return
+
+        this.atualizar({ estado: null })
+    }
+
+    private pressionarNota(nota: Nota) {
+        this.agendarSoltura()
+
+        const ehRepeticaoDaNotaSegurada = this.estado.estado?.nota === nota
+
+        if (ehRepeticaoDaNotaSegurada) return
 
         this.atualizar({
-            luva,
-        })
-
-        const sucesso = await luva.conectar()
-
-        console.log(
-            "Luva: conexão result:",
-            sucesso,
-        )
-
-        if (!sucesso) {
-            this.atualizar({
-                luva: null,
-                conectado: false,
-            })
-
-            return
-        }
-
-        this.atualizar({
-            conectado: true,
+            estado: { nota },
+            sequencia: this.estado.sequencia + 1,
         })
     }
 
-    async desconectar() {
-        const luva = this.estado.luva
+    private processarLinha(linha: string) {
+        let dados: unknown
 
-        if (!luva) {
+        try {
+            dados = JSON.parse(linha)
+        } catch (erro) {
+            console.error("Luva: JSON inválido recebido:", linha, erro)
             return
         }
 
-        console.log("Luva: desconectando...")
+        if (!dados || typeof dados !== "object") {
+            console.warn("Luva: payload inválido recebido:", dados)
+            return
+        }
 
-        await luva.desconectar()
+        const payload = dados as Record<string, unknown>
+
+        if (isEventoSoltar(payload)) {
+            this.soltarNota()
+            return
+        }
+
+        if (!isNotaValida(payload.nota)) {
+            console.warn("Luva: nota inválida recebida:", dados)
+            return
+        }
+
+        this.pressionarNota(payload.nota)
+    }
+
+    private async executarConexao() {
+        if (this.estado.luva || this.conectando) return
+
+        this.conectando = true
+
+        console.log("Luva: iniciando conexão...")
+
+        try {
+            const luva = new Luva(
+                {},
+                (linha) => this.processarLinha(linha),
+                () => {
+                    console.warn("Luva: conexão encerrada pelo dispositivo")
+                    void this.desconectar()
+                },
+            )
+
+            this.atualizar({ luva })
+
+            const conectou = await luva.conectar()
+
+            console.log("Luva: conexão result:", conectou)
+
+            if (!conectou) {
+                this.atualizar({ luva: null, conectado: false })
+                return
+            }
+
+            this.atualizar({ conectado: true })
+        } finally {
+            this.conectando = false
+        }
+    }
+
+    private async executarDesconexao() {
+        const luva = this.estado.luva
+
+        this.cancelarTimerSoltar()
+
+        if (!luva) return
+
+        console.log("Luva: desconectando...")
 
         this.atualizar({
             luva: null,
             conectado: false,
             estado: null,
         })
+
+        try {
+            await luva.desconectar()
+        } catch (erro) {
+            console.error("Luva: erro ao desconectar", erro)
+        }
     }
 }
 
@@ -187,51 +261,215 @@ export const useLuva = () => {
         luvaStore.getSnapshot,
     )
 
-    const conectar = useCallback(() => {
-        return luvaStore.conectar()
-    }, [])
+    const conectar = () => luvaStore.conectar()
 
-    const desconectar = useCallback(() => {
-        return luvaStore.desconectar()
-    }, [])
+    const desconectar = () => luvaStore.desconectar()
 
     return {
         conectar,
         desconectar,
         estado: snapshot.estado,
+        sequencia: snapshot.sequencia,
         conectado: snapshot.conectado,
     }
 }
+
+let ultimaPortaConectada: SerialPort | null = null
 
 class Luva {
     private filtro: FiltroLuva
     private porta: SerialPort | null = null
     private conectado = false
     private reader: ReadableStreamDefaultReader<string> | null = null
+    private abortarLeitura: AbortController | null = null
+    private leituraEncerrada: Promise<void> | null = null
     private onDados: (dados: string) => void
+    private onEncerrado: () => void
 
     constructor(
         filtro: FiltroLuva,
         onDados: (dados: string) => void,
+        onEncerrado: () => void = () => {},
     ) {
         this.filtro = filtro
         this.onDados = onDados
+        this.onEncerrado = onEncerrado
     }
 
     async obterPortasAutorizadas(): Promise<SerialPort[]> {
         return navigator.serial.getPorts()
     }
 
-    private async lerContinuamente() {
-        if (!this.porta?.readable) {
-            return
+    estaConectado() {
+        return this.conectado
+    }
+
+    async conectar(taxaEnvio = TAXA_ENVIO_PADRAO): Promise<boolean> {
+        if (ultimaPortaConectada) {
+            console.log("Luva: reaproveitando a porta da conexão anterior")
+
+            if (await this.abrirPorta(ultimaPortaConectada, taxaEnvio)) {
+                return this.iniciarLeitura(ultimaPortaConectada)
+            }
+
+            console.warn("Luva: a porta memorizada não abriu; pedindo a porta de novo")
+
+            ultimaPortaConectada = null
         }
 
-        const textDecoder = new TextDecoderStream()
+        const porta = await this.pedirPorta()
 
-        const streamFechado = this.porta.readable.pipeTo(
-            textDecoder.writable as unknown as WritableStream<Uint8Array>,
-        )
+        if (!porta) return false
+
+        if (!(await this.abrirPorta(porta, taxaEnvio))) return false
+
+        return this.iniciarLeitura(porta)
+    }
+
+    async desconectar() {
+        const porta = this.porta
+
+        if (!porta) return
+
+        this.conectado = false
+        this.porta = null
+
+        this.abortarLeitura?.abort()
+        this.abortarLeitura = null
+
+        try {
+            void this.reader?.cancel().catch(() => {})
+        } catch {
+            this.reader = null
+        }
+
+        this.reader = null
+
+        await this.aguardarEncerramentoDaLeitura()
+
+        try {
+            await porta.close()
+        } catch (erro) {
+            console.warn("Luva: erro ao fechar a porta", erro)
+        }
+    }
+
+    private async pedirPorta(): Promise<SerialPort | null> {
+        const filters = Object.keys(this.filtro).length ? [this.filtro] : undefined
+
+        try {
+            return await navigator.serial.requestPort({ filters })
+        } catch (erro) {
+            const nome = erro instanceof DOMException ? erro.name : ""
+
+            if (nome === "NotFoundError") {
+                console.warn("Luva: usuário cancelou a seleção da porta")
+            } else if (nome === "SecurityError") {
+                console.warn("Luva: o seletor de porta exige um clique novo — clique em conectar outra vez")
+            } else {
+                console.error("Luva: erro ao selecionar a porta", erro)
+            }
+
+            return null
+        }
+    }
+
+    private async abrirPorta(porta: SerialPort, taxaEnvio: number): Promise<boolean> {
+        await this.fecharSeAindaEstiverAberta(porta)
+
+        for (let tentativa = 1; tentativa <= TENTATIVAS_ABERTURA; tentativa += 1) {
+            try {
+                await porta.open({ baudRate: taxaEnvio })
+
+                return true
+            } catch (erro) {
+                const continuouAberta =
+                    erro instanceof DOMException &&
+                    erro.name === "InvalidStateError" &&
+                    porta.readable !== null
+
+                if (continuouAberta) {
+                    console.warn("Luva: porta já estava aberta, reaproveitando")
+                    return true
+                }
+
+                console.warn(
+                    `Luva: tentativa ${tentativa}/${TENTATIVAS_ABERTURA} de abrir a porta falhou`,
+                    erro,
+                )
+
+                if (tentativa === TENTATIVAS_ABERTURA) return false
+
+                await esperar(INTERVALO_ENTRE_TENTATIVAS_MS)
+            }
+        }
+
+        return false
+    }
+
+    private async fecharSeAindaEstiverAberta(porta: SerialPort) {
+        if (!porta.readable && !porta.writable) return
+
+        console.warn("Luva: porta ainda aberta de uma conexão anterior, fechando antes de reabrir")
+
+        try {
+            await porta.close()
+        } catch (erro) {
+            console.warn("Luva: falha ao fechar a porta reaproveitada", erro)
+        }
+    }
+
+    private iniciarLeitura(porta: SerialPort): boolean {
+        if (porta.readable?.locked) {
+            console.error(
+                "Luva: o stream da porta ficou travado por uma leitura anterior; recarregue a página",
+            )
+
+            return false
+        }
+
+        ultimaPortaConectada = porta
+
+        this.porta = porta
+        this.conectado = true
+
+        void this.lerContinuamente()
+
+        return true
+    }
+
+    private async aguardarEncerramentoDaLeitura() {
+        let encerrouSozinha = true
+
+        await Promise.race([
+            (this.leituraEncerrada ?? Promise.resolve()).then(() => {}),
+            esperar(TEMPO_MAXIMO_ENCERRAR_LEITURA_MS).then(() => {
+                encerrouSozinha = false
+            }),
+        ])
+
+        if (!encerrouSozinha) {
+            console.warn("Luva: o stream não encerrou a tempo; a porta pode precisar ser reaberta")
+        }
+
+        this.leituraEncerrada = null
+    }
+
+    private async lerContinuamente() {
+        const porta = this.porta
+
+        if (!porta?.readable) return
+
+        const textDecoder = new TextDecoderStream()
+        const abortar = new AbortController()
+
+        this.abortarLeitura = abortar
+
+        this.leituraEncerrada = porta.readable
+            .pipeTo(textDecoder.writable as unknown as WritableStream<Uint8Array>, {
+                signal: abortar.signal,
+            })
+            .catch(() => {})
 
         const reader = textDecoder.readable.getReader()
 
@@ -239,98 +477,34 @@ class Luva {
 
         let buffer = ""
 
-        while (this.porta?.readable) {
-            try {
-                while (true) {
-                    const { value, done } =
-                        await reader.read()
-
-                    if (done) {
-                        break
-                    }
-
-                    buffer += value
-
-                    const linhas = buffer.split("\n")
-
-                    buffer = linhas.pop() ?? ""
-
-                    for (const linha of linhas) {
-                        if (linha.trim()) {
-                            this.onDados(linha)
-                        }
-                    }
-                }
-            } catch (erro) {
-                console.error(
-                    "Erro de leitura na luva, tentando recuperar",
-                    erro,
-                )
-            } finally {
-                reader.releaseLock()
-            }
-        }
-
-        await streamFechado.catch(() => {})
-    }
-
-    async conectar(
-        taxaEnvio = 9600,
-    ): Promise<boolean> {
-        const filters =
-            Object.keys(this.filtro).length
-                ? [this.filtro]
-                : undefined
-
         try {
-            this.porta =
-                await navigator.serial.requestPort({
-                    filters,
-                })
+            while (true) {
+                const { value, done } = await reader.read()
 
-            await this.porta.open({
-                baudRate: taxaEnvio,
-            })
+                if (done) break
 
-            this.conectado = true
+                buffer += value
 
-            this.lerContinuamente()
+                const linhas = buffer.split("\n")
 
-            return true
-        } catch (erro) {
-            if (
-                erro instanceof DOMException &&
-                erro.name === "NotFoundError"
-            ) {
-                console.warn(
-                    "Usuário cancelou a seleção da porta",
-                )
-            } else {
-                console.error(
-                    "Erro ao abrir a porta",
-                    erro,
-                )
+                buffer = linhas.pop() ?? ""
+
+                for (const linha of linhas) {
+                    if (linha.trim()) this.onDados(linha)
+                }
             }
-
-            this.conectado = false
-
-            return false
+        } catch (erro) {
+            if (this.conectado) console.error("Luva: erro de leitura", erro)
+        } finally {
+            try {
+                reader.releaseLock()
+            } catch {
+                this.reader = null
+            }
         }
-    }
 
-    async desconectar() {
-        this.conectado = false
+        const dispositivoCaiuSozinho = this.conectado
 
-        await this.reader?.cancel()
-
-        this.reader = null
-
-        await this.porta?.close()
-
-        this.porta = null
-    }
-
-    estaConectado() {
-        return this.conectado
+        if (dispositivoCaiuSozinho) this.onEncerrado()
     }
 }
