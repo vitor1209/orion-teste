@@ -60,9 +60,17 @@ function Pausar($mensagem) {
 }
 
 function VersaoDoPython($executavel) {
-    $saida = & $executavel -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $saida) { return $null }
-    return $saida.Trim()
+    # No Windows PowerShell 5.1, com 2>$null e ErrorActionPreference=Stop, qualquer texto no
+    # stderr de um programa nativo vira erro fatal. Por isso relaxamos so dentro desta funcao.
+    $erroAnterior = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $saida = & $executavel -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $saida) { return $null }
+        return ("$saida").Trim()
+    } finally {
+        $ErrorActionPreference = $erroAnterior
+    }
 }
 
 function AcharPython {
@@ -72,9 +80,17 @@ function AcharPython {
 
     $launcher = Get-Command py -ErrorAction SilentlyContinue
     if ($launcher) {
-        foreach ($alvo in @("-3", "-V:3.13", "-V:3.12", "-V:3.11")) {
-            $caminho = & py $alvo -c "import sys; print(sys.executable)" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $caminho) { $candidatos.Add($caminho.Trim()) }
+        # O py escreve "No suitable Python runtime found" no stderr quando a versao pedida
+        # nao esta instalada (ex.: 3.12). Isso nao pode derrubar o script: so pulamos o seletor.
+        $erroAnterior = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            foreach ($alvo in @("-3", "-V:3.13", "-V:3.12", "-V:3.11")) {
+                $caminho = & py $alvo -c "import sys; print(sys.executable)" 2>$null
+                if ($LASTEXITCODE -eq 0 -and $caminho) { $candidatos.Add(("$caminho").Trim()) }
+            }
+        } finally {
+            $ErrorActionPreference = $erroAnterior
         }
     }
 
@@ -146,8 +162,15 @@ $requirements = Join-Path $pastaApi "requirements.txt"
 
 if ($Verificar) {
     if (Test-Path $pythonVenv) {
-        & $pythonVenv -c "import fastapi, uvicorn, mediapipe, cv2, sqlalchemy, aiosqlite" 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $erroAnterior = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $pythonVenv -c "import fastapi, uvicorn, mediapipe, cv2, sqlalchemy, aiosqlite" 2>$null
+            $codigo = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $erroAnterior
+        }
+        if ($codigo -eq 0) {
             Escrever "Pacotes da API presentes." "Green"
         } else {
             Anotar "Faltam pacotes no venv (rode o instalador sem -Verificar)."
