@@ -7,16 +7,28 @@ arquivo, modelo de visão computacional local e nenhuma chamada para serviço ex
 orion-teste/
 ├── ORION_API/            API FastAPI + MediaPipe (repositório git próprio)
 ├── orion-web/            Front React 19 + Vite (repositório git próprio)
-├── iniciar-offline.bat   Sobe os dois (duplo clique)
-└── iniciar-offline.ps1   O script de verdade
+├── iniciar.exe           Instala (se faltar) e sobe tudo — duplo clique aqui
+├── instalar.bat          Só instala as dependências (duplo clique)
+├── instalar.ps1          O instalador de verdade
+├── iniciar-offline.bat   Só sobe os dois serviços (duplo clique)
+├── iniciar-offline.ps1   O script de verdade
+└── ferramentas/          Código-fonte do iniciar.exe e o script que o compila
 ```
 
 ## Como rodar
 
-Duplo clique em **`iniciar-offline.bat`**.
+Duplo clique em **`iniciar.exe`** — sempre, da primeira vez em diante.
+
+Na primeira vez ele percebe que falta o `ORION_API/venv` ou o `orion-web/node_modules`,
+roda o `instalar.ps1` sozinho (aí precisa de internet — veja
+[Preparo inicial](#preparo-inicial-uma-vez-só-com-internet)) e só então sobe os serviços.
+Nas vezes seguintes vai direto para a subida, sem tocar a rede.
 
 Ele abre duas janelas (API e front), espera o Vite subir e abre o navegador.
 Para parar, feche as duas janelas.
+
+Os `.bat` continuam valendo, se preferir separar as duas coisas: `instalar.bat` só instala,
+`iniciar-offline.bat` só sobe.
 
 | Serviço | Endereço |
 |---------|----------|
@@ -38,15 +50,31 @@ necessário para usar nada.
 
 ## Preparo inicial (uma vez só, com internet)
 
-O script faz isso sozinho se estiver faltando, mas se quiser adiantar:
+O `iniciar.exe` chama isso sozinho quando é preciso. Para rodar só a instalação, duplo
+clique em **`instalar.bat`**. Ele faz, nesta ordem:
+
+1. acha um Python 3.11+ e cria `ORION_API/venv`;
+2. instala o `requirements.txt` e o `aiosqlite` (driver do banco local, que não está no
+   requirements) dentro do venv;
+3. cria `ORION_API/.env` a partir do `.env.example`, com uma `SECRET_KEY` aleatória — a API
+   não sobe sem ela;
+4. roda `npm install` em `orion-web`;
+5. cria `orion-web/.env.local` apontando para `http://localhost:8000`;
+6. confere o modelo do MediaPipe e testa os imports da API.
+
+Pré-requisitos: **Python 3.11 ou mais novo** e **Node.js 20 ou mais novo** (o Vite 8 exige).
+O instalador avisa se algum dos dois faltar.
+
+Depois disso, nada mais toca a rede — é só `iniciar.exe`.
+
+Duas opções úteis, pelo PowerShell:
 
 ```bash
-ORION_API/venv/Scripts/python.exe -m pip install aiosqlite
+powershell -ExecutionPolicy Bypass -File instalar.ps1 -Verificar
 ```
 
-`aiosqlite` é o driver do banco local — é a **única** dependência que ainda não estava
-instalada no `venv`. O `node_modules` do front já está na pasta. Depois disso, nada mais
-toca a rede.
+Não instala nada, só lista o que está faltando. `-Forcar` no lugar de `-Verificar` apaga e
+recria o `venv` e o `node_modules` do zero.
 
 ## O que roda offline
 
@@ -120,6 +148,16 @@ venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 cd orion-web
 npm run dev
 ```
+
+## Recompilar o `iniciar.exe`
+
+O executável é um lançador de ~6 KB: acha a própria pasta, chama o `instalar.ps1` se o
+ambiente não estiver pronto e depois o `iniciar-offline.ps1`. Toda a lógica de verdade está
+nos dois scripts — mexer neles não exige recompilar nada.
+
+Se mudar o `ferramentas/iniciar.cs`, duplo clique em **`ferramentas/compilar-iniciar.bat`**.
+Ele usa o compilador C# que já vem no Windows (`.NET Framework 4`), não baixa nada e
+regrava o `iniciar.exe` na raiz.
 
 ## Configuração
 
